@@ -1,0 +1,101 @@
+{
+  "manifest_version": "0.2",
+  "name": "github",
+  "display_name": "GitHub",
+  "version": "1.0.0",
+  "description": "Repositories auf github.com anlegen, durchsuchen und ihren Code lesen und schreiben.",
+  "long_description": "Verbindet Claude mit github.com. Der Schwerpunkt liegt auf Repositories und ihrem Inhalt — anlegen, beschreiben, Code lesen, ändern, committen, löschen.\n\n**Funktionen**\n• Repositories anlegen (privat oder öffentlich, mit .gitignore- und Lizenzvorlage), auflisten, durchsuchen\n• Beschreibung, Homepage, Topics, Sichtbarkeit, Standard-Branch und Repo-Name ändern; archivieren\n• Dateien und Ordner durchsuchen, Dateien und README lesen, Code-Suche\n• Dateien schreiben, ändern, löschen — einzeln oder mehrere in einem einzigen Commit, wahlweise direkt auf einem neuen Branch\n• Branches anlegen und löschen, Commit-Historie und Diffs ansehen\n• Repositories löschen — standardmäßig gesperrt, muss in den Einstellungen erlaubt werden\n\n**Datenschutz**\nDer Server läuft ausschließlich lokal auf diesem Rechner und spricht direkt mit api.github.com. Es werden keine Daten an Dritte gesendet. Das Token wird von Claude Desktop im Schlüsselspeicher des Betriebssystems abgelegt und ist nicht Teil dieses Pakets.\n\n**Voraussetzungen**\n• uv muss installiert sein (https://docs.astral.sh/uv) — es lädt Python und die Abhängigkeiten beim ersten Start selbst nach\n• Ein Personal Access Token von GitHub. Klassisch: Bereich \"repo\", zusätzlich \"workflow\" für Dateien unter .github/workflows und \"delete_repo\" fürs Löschen. Fine-grained: Contents und Administration auf \"Read and write\"\n\n**Schreibzugriff**\nDiese Extension darf Code ändern und committen. Alles landet sofort im echten Repository — es gibt kein Staging und kein Rückgängig. Neue Repositories sind voreingestellt privat, das Löschen ganzer Repositories ist ab Werk abgeschaltet.",
+  "author": {
+    "name": "Thomas Weirich"
+  },
+  "icon": "icon.png",
+  "server": {
+    "type": "python",
+    "entry_point": "server/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--script",
+        "${__dirname}/server/server.py"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "${user_config.token}",
+        "GITHUB_DEFAULT_OWNER": "${user_config.default_owner}",
+        "GITHUB_PRIVATE_REPOS": "${user_config.private_repos}",
+        "GITHUB_ALLOW_DELETE": "${user_config.allow_delete}"
+      }
+    }
+  },
+  "user_config": {
+    "token": {
+      "type": "string",
+      "title": "GitHub-Token",
+      "description": "Personal Access Token von github.com (Settings → Developer settings → Personal access tokens). Klassisch: Haken bei \"repo\", dazu \"workflow\" für Workflow-Dateien und \"delete_repo\" fürs Löschen. Fine-grained: Contents und Administration auf \"Read and write\". Wird im Schlüsselspeicher des Betriebssystems abgelegt.",
+      "required": true,
+      "sensitive": true
+    },
+    "default_owner": {
+      "type": "string",
+      "title": "Standard-Konto oder Organisation",
+      "description": "Wird ergänzt, wenn ein Repository ohne \"besitzer/\" genannt wird — aus \"meine-app\" wird dann \"firma/meine-app\". Leer lassen für das Konto, dem das Token gehört.",
+      "required": false
+    },
+    "private_repos": {
+      "type": "boolean",
+      "title": "Neue Repositories privat anlegen",
+      "description": "Eingeschaltet: neu erstellte Repositories sind privat, solange nicht ausdrücklich \"öffentlich\" verlangt wird. Ausgeschaltet: sie sind öffentlich sichtbar.",
+      "required": false,
+      "default": true
+    },
+    "allow_delete": {
+      "type": "boolean",
+      "title": "Repositories löschen erlauben",
+      "description": "Ausgeschaltet lehnt die Extension das Löschen ganzer Repositories ab. Einschalten nur, wenn das wirklich gebraucht wird — ein gelöschtes Repository ist mitsamt Historie weg. Einzelne Dateien und Branches lassen sich unabhängig davon immer löschen.",
+      "required": false,
+      "default": false
+    }
+  },
+  "tools": [
+    { "name": "check_connection", "description": "Token prüfen: Konto, Rechte und verbleibendes API-Kontingent" },
+    { "name": "list_repos", "description": "Repositories eines Kontos oder einer Organisation auflisten" },
+    { "name": "get_repo", "description": "Ein Repository mit allen Eckdaten abrufen" },
+    { "name": "search_repos", "description": "Repositories auf GitHub suchen" },
+    { "name": "create_repo", "description": "Repository anlegen, wahlweise mit README, .gitignore und Lizenz" },
+    { "name": "update_repo", "description": "Beschreibung, Homepage, Topics, Sichtbarkeit, Name oder Standard-Branch ändern" },
+    { "name": "delete_repo", "description": "Repository endgültig löschen (nur wenn in den Einstellungen erlaubt)" },
+    { "name": "list_files", "description": "Dateien und Ordner eines Repositories auflisten" },
+    { "name": "read_file", "description": "Eine Datei lesen" },
+    { "name": "get_readme", "description": "Die README eines Repositories lesen" },
+    { "name": "search_code", "description": "Im Code suchen, wahlweise auf ein Repository begrenzt" },
+    { "name": "write_file", "description": "Datei anlegen oder überschreiben und committen" },
+    { "name": "delete_file", "description": "Datei löschen und committen" },
+    { "name": "push_files", "description": "Mehrere Dateien in einem einzigen Commit schreiben, ändern und löschen" },
+    { "name": "list_branches", "description": "Branches auflisten" },
+    { "name": "create_branch", "description": "Branch anlegen" },
+    { "name": "delete_branch", "description": "Branch löschen" },
+    { "name": "list_commits", "description": "Commit-Historie auflisten, wahlweise für eine Datei" },
+    { "name": "get_commit", "description": "Einen Commit mit geänderten Dateien und Diff ansehen" }
+  ],
+  "keywords": [
+    "github",
+    "git",
+    "repository",
+    "code",
+    "commit",
+    "quellcode",
+    "entwicklung"
+  ],
+  "license": "MIT",
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  }
+}
