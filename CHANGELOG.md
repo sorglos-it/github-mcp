@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `tools/build.py` also compares a `version=` written out in the Python entry point with
+  `VERSION`. That one sits in `server.py`, is what the client shows on connect, and was the
+  only version nothing checked — it had to be carried along by hand.
+
 ## 1.0.2 – 2026-09-23
 
 - Repository, path, branch and commit can no longer leave the address they belong to.

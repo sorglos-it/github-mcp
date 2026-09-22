@@ -9,14 +9,15 @@ It needs nothing but Python 3.8 or newer - no Node.js, no npx, no download.
 The same sources always give the same file: entries are sorted and carry a
 fixed timestamp.
 
-Before packing it checks what Claude Desktop relies on: manifest.json, VERSION
-and package.json (if there is one) name the same version, the entry point and
-every ${__dirname} path of the start command exist, the icon is a PNG inside
-the bundle, and every package.json with dependencies has them installed next
-to it in node_modules/.
+Before packing it checks what Claude Desktop relies on: manifest.json, VERSION,
+package.json (if there is one) and a version= spelled out in a Python entry point
+all name the same version, the entry point and every ${__dirname} path of the
+start command exist, the icon is a PNG inside the bundle, and every package.json
+with dependencies has them installed next to it in node_modules/.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import sys
@@ -69,6 +70,32 @@ def check_versions(manifest: dict) -> None:
     package = APP / "package.json"
     if package.is_file() and read_json(package).get("version") != version:
         fail(f"version differs: package.json {read_json(package).get('version')!r}, VERSION {version!r}")
+    check_source_version(manifest, version)
+
+
+def check_source_version(manifest: dict, version: str) -> None:
+    """A Python entry point may name the version itself - MCPServer(..., version="1.2.3"),
+    which is what the client shows on connect. Nothing else would notice it drifting
+    apart from VERSION, so compare it here. Only literal strings are looked at; a version
+    put together at runtime is left alone."""
+    entry = ((manifest.get("server") or {}).get("entry_point") or "")
+    if not entry.endswith(".py"):
+        return
+    path = inside_app(entry)
+    if not path.is_file():
+        return  # check_start reports the missing entry point
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError) as error:
+        fail(f"cannot read {entry}: {error}")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if (kw.arg == "version" and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str) and kw.value.value != version):
+                fail(f"version differs: {entry} line {kw.value.lineno} "
+                     f"{kw.value.value!r}, VERSION {version!r}")
 
 
 def check_start(manifest: dict) -> None:
