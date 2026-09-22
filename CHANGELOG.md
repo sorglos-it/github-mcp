@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.2 – 2026-09-23
+
+- Repository, path, branch and commit can no longer leave the address they belong to.
+  A `..` in any of them used to be removed on the way out, so `o/n/../../../user` ended
+  up at a different endpoint entirely — at worst a branch was deleted in somebody else's
+  repository. Owner and repository name are now checked against what GitHub itself allows,
+  paths and refs are escaped, and `..` is refused.
+- A `#` or `?` in a file name no longer cuts the path short: `a#b` was read — and written —
+  as `a`. Both are escaped now, as are spaces and `%`.
+- Writes no longer follow a redirect. GitHub answers 301 for a renamed repository, and a
+  redirected POST turns into a GET: the write silently did nothing and still reported
+  success. Reads follow redirects as before.
+- Deleting a repository is refused straight away when the setting forbids it, without
+  asking GitHub first. `push_files` checks every path before it writes the first file.
+
 ## 1.0.1 – 2026-09-23
 
 - `GitHubError` is a `ToolError`: its text reaches Claude instead of a bare "Error executing tool".

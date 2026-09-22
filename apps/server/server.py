@@ -28,7 +28,9 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import os
+import re
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, Field
@@ -78,7 +80,7 @@ JSON_CONTENT_LIMIT = 1_000_000
 # Ceiling for how much file text a single read hands back by default.
 MAX_INLINE_BYTES = 100_000
 
-mcp = MCPServer("github", version="1.0.1")
+mcp = MCPServer("github", version="1.0.2")
 
 
 class GitHubError(ToolError):
@@ -117,7 +119,6 @@ class GitHub:
                 "User-Agent": "github-mcpb",
             },
             timeout=TIMEOUT,
-            follow_redirects=True,
         )
         self._login: str | None = None
         self._scopes: str | None = None
@@ -169,8 +170,12 @@ class GitHub:
                 json: Any = None, accept: str | None = None) -> httpx.Response:
         headers = {"Accept": accept} if accept else None
         try:
+            # Reads follow a redirect - GitHub answers 301 for a repository that
+            # was renamed. Writes must not: httpx turns a POST on 301 into a GET,
+            # which would quietly fetch instead of write and report success.
             r = self._c.request(method, path, params=_clean(params or {}) or None,
-                                json=json, headers=headers)
+                                json=json, headers=headers,
+                                follow_redirects=method in ("GET", "HEAD"))
         except httpx.RequestError as e:
             raise GitHubError(f"Cannot reach {API_URL}: {e}") from e
         if "x-oauth-scopes" in r.headers:
@@ -239,6 +244,53 @@ def client() -> GitHub:
 # naming and trimming
 # --------------------------------------------------------------------------
 
+# Everything below goes into an API path. Nothing there may carry a path of its
+# own: httpx removes ".." segments before sending, so "o/n/../../../user" would
+# leave /repos entirely and hit a different endpoint, and an unescaped "#" cuts
+# the path short - a write would land somewhere other than the caller asked for.
+# Hence: owner and repository name are checked against what GitHub itself allows,
+# file paths and refs are percent-encoded, and ".." is refused outright.
+_OWNER_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\Z")
+_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,100}\Z")
+
+
+def _owner(owner: str, what: str = "Account") -> str:
+    """A user or organisation name, as GitHub spells it: letters, digits and
+    hyphens, at most 39 characters."""
+    o = (owner or "").strip()
+    if not _OWNER_RE.fullmatch(o):
+        raise GitHubError(f"{what} '{owner}' is not a GitHub name - "
+                          f"letters, digits and hyphens only.")
+    return o
+
+
+def _clean_path(path: str, what: str = "Path") -> str:
+    """A path inside a repository, tidied and checked. "." and ".." are refused:
+    they are not file names, only ways out of the repository."""
+    parts = [seg for seg in (path or "").strip().strip("/").split("/") if seg]
+    if any(seg in (".", "..") for seg in parts):
+        raise GitHubError(f"{what} '{path}' contains '.' or '..' - "
+                          f"give the path as it is in the repository.")
+    return "/".join(parts)
+
+
+def _enc_path(path: str, what: str = "Path") -> str:
+    """The same path, encoded for the URL: slashes stay separators, everything
+    else that would change the address - space, #, ?, % - is escaped."""
+    return quote(_clean_path(path, what), safe="/")
+
+
+def _enc_ref(ref: str, what: str = "Branch") -> str:
+    """Encode a branch, tag or commit for the URL. A slash is part of many branch
+    names ("feature/x") and stays; ".." is refused - git forbids it in a ref too."""
+    r = (ref or "").strip()
+    if not r:
+        raise GitHubError(f"No {what.lower()} given.")
+    if ".." in r or r.startswith("/") or r.endswith("/"):
+        raise GitHubError(f"{what} '{ref}' is not a valid git name.")
+    return quote(r, safe="/")
+
+
 def repo_path(repo: str) -> str:
     """Normalise a repository reference to "owner/name".
 
@@ -260,6 +312,10 @@ def repo_path(repo: str) -> str:
     owner, name = owner.strip(), name.strip()
     if not owner or not name:
         raise GitHubError(f"Cannot read '{repo}' as owner/name.")
+    if not _OWNER_RE.fullmatch(owner) or not _NAME_RE.fullmatch(name) or name in (".", ".."):
+        raise GitHubError(
+            f"Cannot read '{repo}' as owner/name - an owner may hold letters, digits "
+            f"and hyphens, a repository name additionally '.' and '_'.")
     return f"{owner}/{name}"
 
 
@@ -320,17 +376,18 @@ def _as_text(data: bytes, max_bytes: int) -> dict:
 
 
 def _ref_sha(gh: GitHub, rp: str, branch: str) -> str | None:
-    d = gh.maybe("GET", f"/repos/{rp}/git/ref/heads/{branch}")
+    d = gh.maybe("GET", f"/repos/{rp}/git/ref/heads/{_enc_ref(branch)}")
     return (d or {}).get("object", {}).get("sha")
 
 
 def _resolve_sha(gh: GitHub, rp: str, ref: str) -> str:
     """Resolve a branch name, tag name or commit sha to a commit sha."""
-    for p in (f"/repos/{rp}/git/ref/heads/{ref}", f"/repos/{rp}/git/ref/tags/{ref}"):
+    enc = _enc_ref(ref, "Ref")
+    for p in (f"/repos/{rp}/git/ref/heads/{enc}", f"/repos/{rp}/git/ref/tags/{enc}"):
         d = gh.maybe("GET", p)
         if d:
             return d["object"]["sha"]
-    d = gh.maybe("GET", f"/repos/{rp}/commits/{ref}")
+    d = gh.maybe("GET", f"/repos/{rp}/commits/{enc}")
     if d:
         return d["sha"]
     raise GitHubError(f"Cannot resolve '{ref}' in {rp} - no such branch, tag or commit.")
@@ -383,6 +440,7 @@ def list_repos(owner: str | None = None, kind: str = "all", sort: str = "updated
     """
     gh = client()
     if owner:
+        owner = _owner(owner)
         is_org = gh.maybe("GET", f"/orgs/{owner}") is not None
         path = f"/orgs/{owner}/repos" if is_org else f"/users/{owner}/repos"
         params = {"sort": sort, "type": kind if kind in ("all", "public", "private",
@@ -453,7 +511,8 @@ def create_repo(name: str, description: str | None = None, private: bool | None 
         "gitignore_template": gitignore_template,
         "license_template": license_template,
     })
-    d = gh.json("POST", f"/orgs/{org}/repos" if org else "/user/repos", json=body)
+    d = gh.json("POST", f"/orgs/{_owner(org, 'Organisation')}/repos" if org
+                else "/user/repos", json=body)
     if topics:
         gh.json("PUT", f"/repos/{d['full_name']}/topics", json={"names": topics})
         d["topics"] = topics
@@ -495,12 +554,12 @@ def delete_repo(repo: str, confirm: str) -> dict:
     Switched off unless the extension setting allows it, and confirm must repeat
     the repository name exactly.
     """
-    gh = client()
-    rp = repo_path(repo)
     if not ALLOW_DELETE:
         raise GitHubError(
             "Deleting repositories is switched off. Turn on 'Repositories löschen "
             "erlauben' in the extension settings if that is really wanted.")
+    gh = client()
+    rp = repo_path(repo)
     want = confirm.strip().strip("/").lower()
     if want not in (rp.lower(), rp.split("/")[1].lower()):
         raise GitHubError(f"Confirmation does not match. Pass confirm=\"{rp}\" to delete it.")
@@ -525,7 +584,7 @@ def list_files(repo: str, path: str = "", ref: str | None = None,
     path = (path or "").strip("/")
 
     if not recursive:
-        data = gh.json("GET", f"/repos/{rp}/contents/{path}", params={"ref": ref})
+        data = gh.json("GET", f"/repos/{rp}/contents/{_enc_path(path)}", params={"ref": ref})
         if isinstance(data, dict):
             return {"repo": rp, "path": path, "is_file": True,
                     "note": "This path is a file - use read_file."}
@@ -536,7 +595,8 @@ def list_files(repo: str, path: str = "", ref: str | None = None,
                 "entries": rows[:limit]}
 
     tree_ref = ref or _default_branch(gh, rp)
-    data = gh.json("GET", f"/repos/{rp}/git/trees/{tree_ref}", params={"recursive": "1"})
+    data = gh.json("GET", f"/repos/{rp}/git/trees/{_enc_ref(tree_ref, 'Ref')}",
+                   params={"recursive": "1"})
     rows = []
     for e in data.get("tree") or []:
         p = e.get("path", "")
@@ -565,7 +625,8 @@ def read_file(repo: str, path: str, ref: str | None = None,
     gh = client()
     rp = repo_path(repo)
     path = path.strip("/")
-    meta = gh.json("GET", f"/repos/{rp}/contents/{path}", params={"ref": ref})
+    enc = _enc_path(path)
+    meta = gh.json("GET", f"/repos/{rp}/contents/{enc}", params={"ref": ref})
     if isinstance(meta, list):
         raise GitHubError(f"'{path}' is a folder - use list_files.")
 
@@ -573,7 +634,7 @@ def read_file(repo: str, path: str, ref: str | None = None,
     if meta.get("content"):
         raw = _decode(meta["content"], meta.get("encoding"))
     elif size >= JSON_CONTENT_LIMIT:
-        raw = gh.request("GET", f"/repos/{rp}/contents/{path}", params={"ref": ref},
+        raw = gh.request("GET", f"/repos/{rp}/contents/{enc}", params={"ref": ref},
                          accept="application/vnd.github.raw").content
     else:
         raw = b""
@@ -612,7 +673,7 @@ def search_code(query: str, repo: str | None = None, owner: str | None = None,
     if repo:
         q += f" repo:{repo_path(repo)}"
     elif owner:
-        q += f" user:{owner}"
+        q += f" user:{_owner(owner)}"
     data = gh.json("GET", "/search/code",
                    params={"q": q, "per_page": max(1, min(limit, 100))})
     hits = [{"repo": (i.get("repository") or {}).get("full_name"),
@@ -654,8 +715,9 @@ def write_file(repo: str, path: str, content: str, message: str | None = None,
     gh = client()
     rp = repo_path(repo)
     path = path.strip("/")
+    enc = _enc_path(path)
     if sha is None:
-        cur = gh.maybe("GET", f"/repos/{rp}/contents/{path}", params={"ref": branch})
+        cur = gh.maybe("GET", f"/repos/{rp}/contents/{enc}", params={"ref": branch})
         if isinstance(cur, dict):
             sha = cur.get("sha")
     payload = content if encoding == "base64" else base64.b64encode(
@@ -666,7 +728,7 @@ def write_file(repo: str, path: str, content: str, message: str | None = None,
         "branch": branch,
         "sha": sha,
     })
-    d = gh.json("PUT", f"/repos/{rp}/contents/{path}", json=body)
+    d = gh.json("PUT", f"/repos/{rp}/contents/{enc}", json=body)
     c = d.get("content") or {}
     commit = d.get("commit") or {}
     return {"written": True, "repo": rp, "path": c.get("path", path),
@@ -681,11 +743,12 @@ def delete_file(repo: str, path: str, message: str | None = None,
     gh = client()
     rp = repo_path(repo)
     path = path.strip("/")
-    cur = gh.json("GET", f"/repos/{rp}/contents/{path}", params={"ref": branch})
+    enc = _enc_path(path)
+    cur = gh.json("GET", f"/repos/{rp}/contents/{enc}", params={"ref": branch})
     if isinstance(cur, list):
         raise GitHubError(f"'{path}' is a folder. Delete its files, or use push_files "
                           f"to drop them all in one commit.")
-    d = gh.json("DELETE", f"/repos/{rp}/contents/{path}",
+    d = gh.json("DELETE", f"/repos/{rp}/contents/{enc}",
                 json=_clean({"message": message or f"Delete {path}",
                              "sha": cur["sha"], "branch": branch}))
     return {"deleted": True, "repo": rp, "path": path,
@@ -706,9 +769,11 @@ def push_files(repo: str, files: list[FileEdit], message: str,
     rp = repo_path(repo)
     if not files:
         raise GitHubError("No files given.")
+    paths = [_clean_path(f.path, "File path") for f in files]
 
     info = gh.json("GET", f"/repos/{rp}")
     branch = branch or info.get("default_branch") or "main"
+    _enc_ref(branch)
 
     head = _ref_sha(gh, rp, branch)
     creating = head is None
@@ -724,11 +789,11 @@ def push_files(repo: str, files: list[FileEdit], message: str,
 
     base_tree = None
     if head:
-        base_tree = (gh.json("GET", f"/repos/{rp}/git/commits/{head}").get("tree") or {}).get("sha")
+        base_tree = (gh.json("GET", f"/repos/{rp}/git/commits/{_enc_ref(head, 'Commit')}")
+                     .get("tree") or {}).get("sha")
 
     entries: list[dict] = []
-    for f in files:
-        p = f.path.strip("/")
+    for f, p in zip(files, paths):
         if f.content is None:
             if not base_tree:
                 raise GitHubError(f"Cannot delete '{p}' - the branch has no commit yet.")
@@ -748,10 +813,11 @@ def push_files(repo: str, files: list[FileEdit], message: str,
         gh.json("POST", f"/repos/{rp}/git/refs",
                 json={"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
     else:
-        gh.json("PATCH", f"/repos/{rp}/git/refs/heads/{branch}", json={"sha": commit["sha"]})
+        gh.json("PATCH", f"/repos/{rp}/git/refs/heads/{_enc_ref(branch)}",
+                json={"sha": commit["sha"]})
 
-    written = [f.path.strip("/") for f in files if f.content is not None]
-    removed = [f.path.strip("/") for f in files if f.content is None]
+    written = [p for f, p in zip(files, paths) if f.content is not None]
+    removed = [p for f, p in zip(files, paths) if f.content is None]
     return _clean({"committed": True, "repo": rp, "branch": branch,
                    "branch_created": creating or None,
                    "commit": commit["sha"], "written": written or None,
@@ -784,6 +850,7 @@ def create_branch(repo: str, branch: str, from_ref: str | None = None) -> dict:
     the default branch."""
     gh = client()
     rp = repo_path(repo)
+    _enc_ref(branch)
     src = from_ref or _default_branch(gh, rp)
     sha = _resolve_sha(gh, rp, src)
     gh.json("POST", f"/repos/{rp}/git/refs",
@@ -797,9 +864,10 @@ def delete_branch(repo: str, branch: str) -> dict:
     the default branch is refused."""
     gh = client()
     rp = repo_path(repo)
+    _enc_ref(branch)
     if branch == _default_branch(gh, rp):
         raise GitHubError(f"'{branch}' is the default branch of {rp} and cannot be deleted.")
-    gh.json("DELETE", f"/repos/{rp}/git/refs/heads/{branch}")
+    gh.json("DELETE", f"/repos/{rp}/git/refs/heads/{_enc_ref(branch)}")
     return {"deleted": True, "repo": rp, "branch": branch}
 
 
@@ -826,7 +894,7 @@ def get_commit(repo: str, sha: str, include_patch: bool = False,
     long fast - the budget in max_patch_bytes is shared across all files."""
     gh = client()
     rp = repo_path(repo)
-    d = gh.json("GET", f"/repos/{rp}/commits/{sha}")
+    d = gh.json("GET", f"/repos/{rp}/commits/{_enc_ref(sha, 'Commit')}")
     stats = d.get("stats") or {}
     budget = max_patch_bytes
     files = []
