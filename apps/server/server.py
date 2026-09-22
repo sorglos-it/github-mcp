@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 # --------------------------------------------------------------------------
 # config
@@ -77,10 +78,14 @@ JSON_CONTENT_LIMIT = 1_000_000
 # Ceiling for how much file text a single read hands back by default.
 MAX_INLINE_BYTES = 100_000
 
-mcp = MCPServer("github", version="1.0.0")
+mcp = MCPServer("github", version="1.0.1")
 
 
-class GitHubError(RuntimeError):
+class GitHubError(ToolError):
+    """A failure Claude has to read: the SDK passes only ToolError text on.
+    Anything else reaches the model as a bare "Error executing tool <name>" -
+    no hint what went wrong, nothing the user can be guided to fix."""
+
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status

@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased – 2026-09-22
+## 1.0.1 – 2026-09-23
 
+- `GitHubError` is a `ToolError`: its text reaches Claude instead of a bare "Error executing tool".
+  Everything the server refuses on purpose — no repository given, a confirmation that does not match,
+  the default branch that cannot be deleted, a rejected request from GitHub — is now readable, so
+  Claude can say what to do next.
 - Author is now „Sorglos Thomas Weirich“. Claude Desktop derives the extension's identity from it:
   uninstall the old extension once before installing this version, then enter the settings again.
 - Project layout follows the project standard: the server lives in `apps/server/` (`server.py`, `manifest.json`,
