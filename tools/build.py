@@ -3,23 +3,31 @@
 
     python tools/build.py
 
-A .mcpb file is a zip archive. This script packs apps/server/ (without VERSION)
-plus README.md, LICENSE and, if present, THIRD-PARTY.md from the project root.
-It needs nothing but Python 3.8 or newer - no Node.js, no npx, no download.
-The same sources always give the same file: entries are sorted and carry a
-fixed timestamp.
+A .mcpb file is a zip archive. This script packs apps/server/ (without VERSION
+and without tests/) plus README.md, LICENSE and, if present, THIRD-PARTY.md from
+the project root. Packing needs nothing but Python 3.8 or newer - no Node.js, no
+npx, no download. The same sources always give the same file: entries are sorted
+and carry a fixed timestamp.
 
 Before packing it checks what Claude Desktop relies on: manifest.json, VERSION,
 package.json (if there is one) and a version= spelled out in a Python entry point
 all name the same version, the entry point and every ${__dirname} path of the
 start command exist, the icon is a PNG inside the bundle, and every package.json
 with dependencies has them installed next to it in node_modules/.
+
+Then it runs apps/server/tests/ and only packs when they pass. Those tests start
+the server, which takes uv; without uv they are skipped with a notice and packing
+goes ahead. They run offline - the live part of the suite needs a token and is
+left to a separate run.
 """
 from __future__ import annotations
 
 import ast
 import hashlib
 import json
+import os
+import shutil
+import subprocess
 import sys
 import zipfile
 from fnmatch import fnmatch
@@ -36,7 +44,7 @@ SKIP_FILES = ("*.pyc", ".DS_Store", "Thumbs.db", ".gitignore", ".mcpbignore", "*
               ".prettierignore", ".eslintignore", ".nycrc", ".babelrc", ".pnp.*", "*.map",
               "npm-debug.log*", "yarn-debug.log*", "yarn-error.log*", "package-lock.json",
               "yarn.lock", "*.mcpb", "*.d.ts", "*.tsbuildinfo", "tsconfig.json")
-SKIP_DIRS = ("__pycache__", ".git", ".npm", ".yarn", ".bin", ".cache")
+SKIP_DIRS = ("__pycache__", ".git", ".npm", ".yarn", ".bin", ".cache", "tests")
 STAMP = (1980, 1, 1, 0, 0, 0)
 PNG = b"\x89PNG\r\n\x1a\n"
 DIRNAME = "${__dirname}/"
@@ -127,6 +135,23 @@ def check_dependencies() -> None:
                      f"npm install --prefix {where} --omit=dev --ignore-scripts")
 
 
+def check_tests() -> None:
+    """Run the test suite and refuse to pack on a failure. Without uv the server
+    cannot start, so the tests are skipped rather than failing a build that is
+    otherwise fine. GITHUB_TOKEN is taken out: a build stays offline and repeatable,
+    the live part of the suite is a separate run."""
+    suite = APP / "tests" / "test_server.py"
+    if not suite.is_file():
+        return
+    if not shutil.which("uv"):
+        print("build: tests skipped - uv is missing (https://docs.astral.sh/uv)")
+        return
+    env = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
+    done = subprocess.run([sys.executable, str(suite)], env=env)
+    if done.returncode != 0:
+        fail(f"{suite.relative_to(ROOT).as_posix()} failed - nothing packed")
+
+
 def collect() -> list[tuple[str, Path]]:
     entries = []
     for path in APP.rglob("*"):
@@ -150,6 +175,7 @@ def main() -> None:
     check_versions(manifest)
     check_start(manifest)
     check_dependencies()
+    check_tests()
     entries = collect()
     DIST.mkdir(exist_ok=True)
     target = DIST / f"{manifest['name']}-{manifest['version']}.mcpb"

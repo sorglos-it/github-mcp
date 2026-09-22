@@ -178,6 +178,7 @@ apps/server/manifest.json    name, settings and start command of the extension (
 apps/server/server.py        the server; its dependencies sit in the PEP 723 header of this one file
 apps/server/assets/icon.png  icon shown in Claude Desktop
 apps/server/VERSION          version, the same as in manifest.json
+apps/server/tests/           checks the server over MCP; not part of the extension
 tools/build.py               packs apps/server, README.md and LICENSE into dist/github-<version>.mcpb
 ```
 
@@ -185,8 +186,22 @@ tools/build.py               packs apps/server, README.md and LICENSE into dist/
 python tools/build.py        # Python 3.8 or newer, nothing else; `uv run tools/build.py` works too
 ```
 
+The build runs the tests first and packs nothing when one fails. To run them on their own:
+
+```bash
+python apps/server/tests/test_server.py
+```
+
+That part needs no token and no network. It drives every tool over MCP with input that has to be refused and reads the
+refusal, because a failure only reaches Claude when the server raises it as a `ToolError`. A second part reads from
+api.github.com — never a write — and runs only when a token is passed in:
+
+```bash
+GITHUB_TOKEN="$(gh auth token)" python apps/server/tests/test_server.py
+```
+
 There is nothing to compile. For a new version, raise it in `apps/server/VERSION`, `apps/server/manifest.json` and in
-`server.py` (`MCPServer("github", version=…)`) — the build stops when `VERSION` and `manifest.json` differ.
+`server.py` (`MCPServer("github", version=…)`) — the build stops as soon as the three differ.
 
 How it works:
 

@@ -5,6 +5,10 @@
 - `tools/build.py` also compares a `version=` written out in the Python entry point with
   `VERSION`. That one sits in `server.py`, is what the client shows on connect, and was the
   only version nothing checked — it had to be carried along by hand.
+- `apps/server/tests/test_server.py` drives every tool over MCP the way Claude does and reads
+  the refusals. The build runs it and packs nothing when one fails. A second part reads from
+  api.github.com — never a write — and runs only when `GITHUB_TOKEN` is passed in. The tests
+  stay out of the `.mcpb`.
 
 ## 1.0.2 – 2026-09-23
 
