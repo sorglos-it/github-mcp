@@ -29,6 +29,12 @@ You need Claude Desktop 0.10.0 or newer (Windows, macOS, Linux) and [uv](#instal
 If something misbehaves, `check_connection` is the first thing to reach for: it reports who the token belongs to,
 which scopes it carries and how much API quota is left.
 
+## Update
+
+Install the new `.mcpb` the same way; it replaces the old one.
+**Once, for bundles built after 22 Sep 2026:** the author name changed, so Claude Desktop sees a new
+extension. Uninstall the old *GitHub* extension first (*Settings → Extensions*), then install the new one and enter your token again.
+
 ## Install uv
 
 uv fetches Python and the two libraries the server needs (`mcp`, `httpx`) on first start, so the `.mcpb` stays a few
@@ -152,7 +158,7 @@ Get-ChildItem "$env:LOCALAPPDATA\uv\cache\environments-v2" -Directory | Where-Ob
 ```
 
 ```powershell
-Get-ChildItem "$env:APPDATA\Claude\Claude Extensions\local.mcpb.thomas-weirich.github" -Recurse -Filter server.py | ForEach-Object { uv run --script $_.FullName }
+Get-ChildItem "$env:APPDATA\Claude\Claude Extensions\local.mcpb.*.github" -Recurse -Filter server.py | ForEach-Object { uv run --script $_.FullName }
 ```
 
 The second command finds the installed `server.py`, rebuilds the environment and then sits there silently — that is
