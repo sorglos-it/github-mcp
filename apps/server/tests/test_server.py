@@ -5,11 +5,13 @@
 
 Two parts. The offline part always runs and needs no token: it drives the tools
 with input that must be refused and reads the refusal, because a tool failure
-only reaches Claude when it is raised as a ToolError. The live part runs only
-when GITHUB_TOKEN is set and then reads from api.github.com - never a write, so
-a token with wide permissions is not put at risk:
+only reaches Claude when it is raised as a ToolError.
 
-    GITHUB_TOKEN="$(gh auth token)" python apps/server/tests/test_server.py
+    python apps/server/tests/test_server.py --live
+
+adds the live part, which reads from api.github.com - never a write, so a token
+with wide permissions is not put at risk. The token comes from GITHUB_TOKEN or,
+failing that, from the GitHub CLI; nobody has to paste it and it is never printed.
 
 The live part reads public repositories that may move. A target that has gone
 is reported as SKIP, not as a failure - nothing is wrong with the server then.
@@ -229,6 +231,23 @@ def live(token: str) -> None:
     gh.close()
 
 
+def github_token() -> str:
+    """The token for the live part: GITHUB_TOKEN if it is set, otherwise the one
+    the GitHub CLI keeps. It goes straight into the server process and is never
+    printed - which is why this asks gh instead of asking anyone to paste it."""
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        return token
+    if not shutil.which("gh"):
+        sys.exit("test: --live needs a token. Either set GITHUB_TOKEN, or install the\n"
+                 "      GitHub CLI (https://cli.github.com) and run: gh auth login")
+    done = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+    token = done.stdout.strip()
+    if done.returncode != 0 or not token:
+        sys.exit("test: the GitHub CLI holds no token - run: gh auth login")
+    return token
+
+
 def main() -> int:
     if not SERVER.is_file():
         sys.exit(f"test: no server at {SERVER}")
@@ -236,12 +255,11 @@ def main() -> int:
         sys.exit("test: uv is missing - it starts the server (https://docs.astral.sh/uv)")
 
     offline()
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if token:
-        live(token)
+    if "--live" in sys.argv[1:] or os.environ.get("GITHUB_TOKEN", "").strip():
+        live(github_token())
     else:
-        print("\n--- live skipped: no GITHUB_TOKEN. To include it:\n"
-              '    GITHUB_TOKEN="$(gh auth token)" python apps/server/tests/test_server.py')
+        print("\n--- live part skipped. To read from api.github.com as well:\n"
+              "    python apps/server/tests/test_server.py --live")
 
     failed = [r for r in results if r[0] == FAIL]
     skipped = [r for r in results if r[0] == SKIP]

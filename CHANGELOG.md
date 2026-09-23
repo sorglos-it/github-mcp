@@ -7,8 +7,9 @@
   only version nothing checked — it had to be carried along by hand.
 - `apps/server/tests/test_server.py` drives every tool over MCP the way Claude does and reads
   the refusals. The build runs it and packs nothing when one fails. A second part reads from
-  api.github.com — never a write — and runs only when `GITHUB_TOKEN` is passed in. The tests
-  stay out of the `.mcpb`.
+  api.github.com — never a write — and is switched on with `--live`, which works in every
+  shell; the token comes from `GITHUB_TOKEN` or from the GitHub CLI. The tests stay out of
+  the `.mcpb`.
 
 ## 1.0.2 – 2026-09-23
 
