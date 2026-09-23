@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.3 – 2026-09-23
 
 - `tools/build.py` also compares a `version=` written out in the Python entry point with
   `VERSION`. That one sits in `server.py`, is what the client shows on connect, and was the
@@ -10,6 +10,8 @@
   api.github.com — never a write — and is switched on with `--live`, which works in every
   shell; the token comes from `GITHUB_TOKEN` or from the GitHub CLI. The tests stay out of
   the `.mcpb`.
+- The server itself is unchanged since 1.0.2 — `server.py` is byte for byte the same file.
+  This version exists so the README inside the bundle matches the one in the repository.
 
 ## 1.0.2 – 2026-09-23
 

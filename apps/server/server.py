@@ -80,7 +80,7 @@ JSON_CONTENT_LIMIT = 1_000_000
 # Ceiling for how much file text a single read hands back by default.
 MAX_INLINE_BYTES = 100_000
 
-mcp = MCPServer("github", version="1.0.2")
+mcp = MCPServer("github", version="1.0.3")
 
 
 class GitHubError(ToolError):
